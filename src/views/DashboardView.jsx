@@ -1,20 +1,26 @@
 import React from 'react';
 import { Card, PageHeader } from '../components/ui';
 
-export function DashboardView({ db }) {
+export function DashboardView({ scopedData }) {
+  const { apartment, role, members, rooms, meters, expenses } = scopedData;
+
   const stats = [
-    { label: 'Pokoje', value: db?.rooms?.length || 0, unit: 'zdefiniowanych' },
-    { label: 'Lokatorzy', value: db?.tenants?.length || 0, unit: 'w lokalu' },
-    { label: 'Liczniki', value: db?.meters?.length || 0, unit: 'odczytów' },
-    { label: 'Wydatki', value: db?.expenses?.length || 0, unit: 'rachunków' },
+    { label: 'Pokoje', value: rooms.length, unit: 'w tym lokalu' },
+    { label: 'Lokatorzy', value: members.length, unit: 'przypisanych' },
+    { label: 'Liczniki', value: meters.length, unit: 'odczytów' },
+    { label: 'Wydatki', value: expenses.length, unit: 'rachunków' },
   ];
 
   return (
     <div className="space-y-6">
       <PageHeader
-        badge="LokatorPay"
+        badge={`${apartment.name} • ${role === 'admin' ? 'Administrator' : 'Lokator'}`}
         title="Sprawiedliwe rozliczanie rachunków i mediów domowych"
-        description="Podział czynszu według metrażu pokoi, liczniki prądu i wody (kWh, m³) oraz automatyczne bilanse dla lokatorów."
+        description={
+          apartment.address
+            ? `Adres lokalu: ${apartment.address}. Podział czynszu według metrażu pokoi, liczniki prądu i wody oraz automatyczne bilanse.`
+            : 'Podział czynszu według metrażu pokoi, liczniki prądu i wody (kWh, m³) oraz automatyczne bilanse dla lokatorów.'
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

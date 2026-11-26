@@ -1,84 +1,144 @@
 import React, { useState } from 'react';
 import { useStore } from './store/useStore';
-import { DashboardView } from './views/DashboardView';
-import { RoomsView } from './views/RoomsView';
-import { TenantsView } from './views/TenantsView';
-import { MetersView } from './views/MetersView';
-import { SettlementsView } from './views/SettlementsView';
+import { AuthView } from './views/AuthView';
+import { OnboardingApartmentView } from './views/OnboardingApartmentView';
+import { DashboardRoomsView } from './views/DashboardRoomsView';
+import { Button, Badge } from './components/ui';
 
 export default function App() {
   const store = useStore();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [creatingNewApt, setCreatingNewApt] = useState(false);
 
-  const tabs = [
-    { id: 'dashboard', label: 'Pulpit' },
-    { id: 'rooms', label: 'Pokoje (m²)' },
-    { id: 'tenants', label: 'Lokatorzy' },
-    { id: 'meters', label: 'Liczniki' },
-    { id: 'settlements', label: 'Bilans' },
-  ];
+  if (store.loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <p className="text-sm font-medium text-slate-700">Weryfikacja sesji i ładowanie lokalu...</p>
+      </div>
+    );
+  }
+
+  // US1: Widok autoryzacji (Rejestracja i Logowanie)
+  if (!store.session) {
+    return <AuthView store={store} />;
+  }
+
+  const { apartment, role } = store.scopedData;
+  const hasApartment = Boolean(apartment);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col overflow-x-hidden">
-      {/* Link szybkiego przejścia do treści dla klawiatury (WCAG AA) */}
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2 focus:bg-indigo-700 focus:text-white focus:rounded-lg focus:font-semibold"
-      >
-        Przejdź do głównej treści
-      </a>
-
-      {/* Responsywny pasek nawigacji (320px -> 1920px) */}
-      <header className="bg-white border-b border-slate-300 px-3 sm:px-6 lg:px-8 py-3 sm:py-4">
-        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="font-bold text-lg sm:text-xl tracking-tight text-slate-900 truncate">
-                LokatorPay
-              </span>
-              <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-900 shrink-0">
-                NFR-05
-              </span>
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      {/* Nawigacja responsywna (320px - 1920px) */}
+      <header className="sticky top-0 z-20 bg-white border-b border-slate-200">
+        <div className="max-w-5xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="h-9 w-9 shrink-0 rounded-lg bg-indigo-600 text-white font-bold flex items-center justify-center">
+              LP
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-900 tracking-tight truncate">
+                  LokatorPay
+                </span>
+                {role && (
+                  <Badge variant={role === 'admin' ? 'primary' : 'neutral'}>
+                    {role === 'admin' ? 'Administrator' : 'Lokator'}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-slate-600 truncate">
+                {store.session.user.name} ({store.session.user.email})
+              </p>
             </div>
           </div>
 
-          <nav
-            aria-label="Nawigacja główna"
-            className="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 bg-slate-200/80 p-1.5 rounded-xl"
-          >
-            {tabs.map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`min-h-[44px] px-3 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-colors text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-700 ${
-                    isActive
-                      ? 'bg-indigo-700 text-white shadow-sm'
-                      : 'bg-white/70 text-slate-900 hover:bg-white'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Przełącznik lokali (wsparcie wielu mieszkań użytkownika) */}
+            {store.apartments.length > 0 && (
+              <select
+                aria-label="Wybierz aktywny lokal"
+                value={apartment?.id || ''}
+                onChange={(e) => {
+                  setCreatingNewApt(false);
+                  store.switchApartment(e.target.value);
+                }}
+                className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs sm:text-sm font-medium text-slate-800 max-w-[180px] sm:max-w-[240px]"
+              >
+                {store.apartments.map((apt) => (
+                  <option key={apt.id} value={apt.id}>
+                    {apt.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {hasApartment && (
+              <Button
+                variant="secondary"
+                onClick={() => setCreatingNewApt((prev) => !prev)}
+                className="text-xs sm:text-sm px-3"
+              >
+                {creatingNewApt ? 'Wróć do lokalu' : '+ Lokal'}
+              </Button>
+            )}
+
+            <Button
+              variant="ghost"
+              onClick={store.logout}
+              className="text-xs sm:text-sm px-3"
+            >
+              Wyloguj
+            </Button>
+          </div>
         </div>
       </header>
 
-      {/* Główny obszar roboczy */}
-      <main
-        id="main-content"
-        className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8"
-      >
-        {activeTab === 'dashboard' && <DashboardView db={store.db} />}
-        {activeTab === 'rooms' && <RoomsView store={store} />}
-        {activeTab === 'tenants' && <TenantsView store={store} />}
-        {activeTab === 'meters' && <MetersView store={store} />}
-        {activeTab === 'settlements' && <SettlementsView store={store} />}
+      {/* Powiadomienie o realizacji zaproszenia do lokalu */}
+      {store.inviteBanner && (
+        <div className="max-w-5xl w-full mx-auto px-3 sm:px-6 pt-4">
+          <div
+            role="status"
+            className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm font-medium ${
+              store.inviteBanner.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-rose-50 border-rose-200 text-rose-900'
+            }`}
+          >
+            <span>{store.inviteBanner.message}</span>
+            <button
+              type="button"
+              onClick={store.clearInviteBanner}
+              className="text-xs font-bold underline shrink-0"
+            >
+              Zamknij
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Główna zawartość */}
+      <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 py-6 sm:py-8">
+        {!hasApartment || creatingNewApt ? (
+          <OnboardingApartmentView
+            store={{
+              ...store,
+              createApartment: async (payload) => {
+                await store.createApartment(payload);
+                setCreatingNewApt(false);
+              },
+              joinApartmentByToken: async (rawInput) => {
+                await store.joinApartmentByToken(rawInput);
+                setCreatingNewApt(false);
+              },
+            }}
+          />
+        ) : (
+          <DashboardRoomsView store={store} />
+        )}
       </main>
+
+      <footer className="border-t border-slate-200 bg-white py-4 px-3 sm:px-6 text-center text-xs text-slate-600">
+        LokatorPay &bull; Modułowy system rozliczeń lokatorskich
+      </footer>
     </div>
   );
 }

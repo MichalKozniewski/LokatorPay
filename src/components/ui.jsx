@@ -38,7 +38,7 @@ export function Badge({ children, variant = 'neutral' }) {
 
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-1 text-xs font-semibold font-mono rounded-md border ${
+      className={`inline-flex items-center px-2.5 py-1 text-xs font-semibold font-mono rounded-md border break-all ${
         styles[variant] || styles.neutral
       }`}
     >
@@ -87,7 +87,7 @@ export function Input({ id, label, error, hint, className = '', ...props }) {
       <input
         id={id}
         aria-invalid={Boolean(error)}
-        className={`w-full min-h-[44px] px-3.5 py-2 text-base sm:text-sm text-slate-900 bg-white border rounded-lg placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+        className={`w-full min-h-[44px] px-3.5 py-2 text-base sm:text-sm text-slate-900 bg-white border rounded-lg placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
           error
             ? 'border-rose-600 focus:ring-rose-600'
             : 'border-slate-400 focus:border-indigo-700 focus:ring-indigo-600'

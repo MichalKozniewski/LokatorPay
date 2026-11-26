@@ -1,6 +1,6 @@
-# NajemPro — Szablon Startowy (v0.1 Slate)
+# LokatorPay
 
-Czysty projekt React + Vite + Tailwind CSS przygotowany pod stopniowe dopisywanie funkcji.
+Frontend React/Vite oraz API FastAPI z bazą SQLAlchemy.
 
 ## Uruchomienie lokalne
 
@@ -9,10 +9,18 @@ npm install
 npm run dev
 ```
 
-## Struktura projektu
+API (w osobnym terminalu):
 
-- `src/store/useStore.js` — stan aplikacji (`db`), zapis w `localStorage` i miejsce na akcje (`os2`).
-- `src/views/DashboardView.jsx` — widok pulpitu startowego.
-- `src/views/RoomsView.jsx` — widok pod moduł pokoi i metrażu (`FR-03`).
-- `src/views/TenantsView.jsx` — widok pod moduł lokatorów.
-- `src/App.jsx` — główny układ aplikacji, nawigacja oraz panel debugowania stanu JSON (`os3`).
+```bash
+cd backend
+python -m pip install -r requitements.txt
+uvicorn main:app --reload
+```
+
+Lokalnie frontend łączy się z `http://localhost:8000`, a API używa SQLite w `backend/lokatorpay.db`.
+
+## Konfiguracja produkcyjna
+
+Przed budowaniem frontendu ustaw `VITE_API_URL` na adres API HTTPS, np. `https://api.example.com`. Build produkcyjny przerwie się, jeśli adres jest brakujący lub używa HTTP.
+
+Backend wymaga `ENV=production`, `JWT_SECRET_KEY` oraz `FRONTEND_ORIGIN` z originem HTTPS. Za reverse proxy uruchom Uvicorn z obsługą nagłówków proxy ograniczoną do adresu zaufanego proxy, np. `--proxy-headers --forwarded-allow-ips=<adres-proxy>`. Nie wystawiaj bezpośrednio portu aplikacji do niezaufanej sieci.
