@@ -20,6 +20,13 @@ export function DashboardRoomsView({ store }) {
   const [roomLoading, setRoomLoading] = useState(false);
   const [roomError, setRoomError] = useState('');
   const [assignError, setAssignError] = useState('');
+  const [editingRoomId, setEditingRoomId] = useState(null);
+  const [editRoomName, setEditRoomName] = useState('');
+  const [editRoomArea, setEditRoomArea] = useState('');
+  const [editRoomError, setEditRoomError] = useState('');
+  const [editRoomLoading, setEditRoomLoading] = useState(false);
+  const [memberActionError, setMemberActionError] = useState('');
+  const [memberActionMessage, setMemberActionMessage] = useState('');
 
   if (!apartment) return null;
 
@@ -90,12 +97,75 @@ export function DashboardRoomsView({ store }) {
     }
   };
 
+  const startEditingRoom = (room) => {
+    setEditingRoomId(room.id);
+    setEditRoomName(room.name);
+    setEditRoomArea(String(room.area));
+    setEditRoomError('');
+  };
+
+  const cancelEditingRoom = () => {
+    setEditingRoomId(null);
+    setEditRoomError('');
+  };
+
+  const handleUpdateRoom = async (e) => {
+    e.preventDefault();
+    if (!editingRoomId) return;
+    setEditRoomError('');
+    setEditRoomLoading(true);
+    try {
+      await store.updateRoom({
+        roomId: editingRoomId,
+        name: editRoomName,
+        area: editRoomArea,
+      });
+      setEditingRoomId(null);
+    } catch (err) {
+      setEditRoomError(err.message);
+    } finally {
+      setEditRoomLoading(false);
+    }
+  };
+
   const handleDeleteRoom = async (roomId) => {
     setAssignError('');
     try {
       await store.removeRoom(roomId);
+      if (editingRoomId === roomId) setEditingRoomId(null);
     } catch (err) {
       setAssignError(err.message);
+    }
+  };
+
+  const handleRemoveMember = async (member) => {
+    if (!window.confirm(`Usunąć ${member.name} z lokalu?`)) return;
+    setMemberActionError('');
+    setMemberActionMessage('');
+    try {
+      await store.removeApartmentMember({
+        apartmentId: apartment.id,
+        userId: member.userId,
+      });
+    } catch (err) {
+      setMemberActionError(err.message);
+    }
+  };
+
+  const handleTransferAdmin = async (member) => {
+    if (!window.confirm(`Przekazać rolę administratora użytkownikowi ${member.name}?`)) {
+      return;
+    }
+    setMemberActionError('');
+    setMemberActionMessage('');
+    try {
+      await store.transferApartmentAdmin({
+        apartmentId: apartment.id,
+        userId: member.userId,
+      });
+      setMemberActionMessage(`Rola administratora została przekazana użytkownikowi ${member.name}.`);
+    } catch (err) {
+      setMemberActionError(err.message);
     }
   };
 
@@ -280,59 +350,121 @@ export function DashboardRoomsView({ store }) {
                   return (
                     <div
                       key={room.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50/70 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                      className="rounded-lg border border-slate-200 bg-slate-50/70 p-4"
                     >
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-bold text-slate-900 break-words">
-                            {room.name}
-                          </h3>
-                          <Badge variant="primary">{room.area.toFixed(2)} m²</Badge>
-                          <Badge variant="neutral">Udział: {sharePercent}%</Badge>
-                        </div>
-                        <p className="text-xs text-slate-700">
-                          Lokator:{' '}
-                          <span className="font-semibold text-slate-900">
-                            {assignedMember
-                              ? `${assignedMember.name} (${assignedMember.email})`
-                              : 'Nieprzypisany'}
-                          </span>
-                        </p>
-                      </div>
+                      {editingRoomId === room.id ? (
+                        <form
+                          onSubmit={handleUpdateRoom}
+                          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_8rem_auto] gap-3 items-end"
+                        >
+                          <Input
+                            id={`edit-room-name-${room.id}`}
+                            label="Nazwa pokoju"
+                            value={editRoomName}
+                            onChange={(e) => setEditRoomName(e.target.value)}
+                            required
+                          />
+                          <Input
+                            id={`edit-room-area-${room.id}`}
+                            label="Metraż (m²)"
+                            type="number"
+                            min="0.01"
+                            max="9999.99"
+                            step="0.01"
+                            value={editRoomArea}
+                            onChange={(e) => setEditRoomArea(e.target.value)}
+                            required
+                          />
+                          {editRoomError && (
+                            <p
+                              role="alert"
+                              className="sm:col-span-2 lg:col-span-3 text-sm font-semibold text-rose-700"
+                            >
+                              {editRoomError}
+                            </p>
+                          )}
+                          <div className="sm:col-span-2 lg:col-span-1 flex flex-wrap gap-2 sm:justify-end lg:justify-start">
+                            <Button
+                              type="submit"
+                              disabled={editRoomLoading}
+                              className="px-3"
+                            >
+                              {editRoomLoading ? 'Zapisywanie...' : 'Zapisz'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={cancelEditingRoom}
+                              disabled={editRoomLoading}
+                              className="px-3"
+                            >
+                              Anuluj
+                            </Button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-bold text-slate-900 break-words">
+                                {room.name}
+                              </h3>
+                              <Badge variant="primary">{room.area.toFixed(2)} m²</Badge>
+                              <Badge variant="neutral">Udział: {sharePercent}%</Badge>
+                            </div>
+                            <p className="text-xs text-slate-700">
+                              Lokator:{' '}
+                              <span className="font-semibold text-slate-900">
+                                {assignedMember
+                                  ? `${assignedMember.name} (${assignedMember.email})`
+                                  : 'Nieprzypisany'}
+                              </span>
+                            </p>
+                          </div>
 
-                      {isAdmin && (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <select
-                            aria-label={`Przypisz lokatora do pokoju ${room.name}`}
-                            value={room.tenantId || ''}
-                            onChange={(e) => handleAssignTenant(room.id, e.target.value)}
-                            className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs sm:text-sm text-slate-900"
-                          >
-                            <option value="">-- Wolny pokój --</option>
-                            {members.map((m) => {
-                              const takenElsewhere =
-                                assignedTenantIds.has(m.userId) && room.tenantId !== m.userId;
-                              return (
-                                <option
-                                  key={m.userId}
-                                  value={m.userId}
-                                  disabled={takenElsewhere}
-                                >
-                                  {m.name}
-                                  {takenElsewhere ? ' (przypisany)' : ''}
-                                </option>
-                              );
-                            })}
-                          </select>
+                          {isAdmin && (
+                            <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto">
+                              <select
+                                aria-label={`Przypisz lokatora do pokoju ${room.name}`}
+                                value={room.tenantId || ''}
+                                onChange={(e) => handleAssignTenant(room.id, e.target.value)}
+                                className="min-h-[44px] max-w-[9rem] shrink-0 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 sm:max-w-none sm:text-sm"
+                              >
+                                <option value="">-- Wolny pokój --</option>
+                                {members.map((m) => {
+                                  const takenElsewhere =
+                                    assignedTenantIds.has(m.userId) && room.tenantId !== m.userId;
+                                  return (
+                                    <option
+                                      key={m.userId}
+                                      value={m.userId}
+                                      disabled={takenElsewhere}
+                                    >
+                                      {m.name}
+                                      {takenElsewhere ? ' (przypisany)' : ''}
+                                    </option>
+                                  );
+                                })}
+                              </select>
 
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={() => handleDeleteRoom(room.id)}
-                            className="text-rose-700 hover:bg-rose-50 px-3"
-                          >
-                            Usuń
-                          </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => startEditingRoom(room)}
+                                className="shrink-0 whitespace-nowrap px-3 text-xs"
+                              >
+                                Edytuj
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="danger"
+                                onClick={() => handleDeleteRoom(room.id)}
+                                className="shrink-0 whitespace-nowrap px-3 text-xs"
+                              >
+                                Usuń
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -355,11 +487,22 @@ export function DashboardRoomsView({ store }) {
               </p>
             </div>
 
+            {memberActionError && (
+              <p role="alert" className="text-sm font-semibold text-rose-700">
+                {memberActionError}
+              </p>
+            )}
+            {memberActionMessage && (
+              <p role="status" className="text-sm font-semibold text-emerald-800">
+                {memberActionMessage}
+              </p>
+            )}
+
             <ul className="divide-y divide-slate-200">
               {members.map((member) => (
                 <li
                   key={member.userId}
-                  className="py-3 flex flex-wrap items-center justify-between gap-2"
+                  className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-900 truncate">
@@ -367,9 +510,31 @@ export function DashboardRoomsView({ store }) {
                     </p>
                     <p className="text-xs text-slate-600 truncate">{member.email}</p>
                   </div>
-                  <Badge variant={member.role === 'admin' ? 'primary' : 'neutral'}>
-                    {member.role === 'admin' ? 'Administrator' : 'Lokator'}
-                  </Badge>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={member.role === 'admin' ? 'primary' : 'neutral'}>
+                      {member.role === 'admin' ? 'Administrator' : 'Lokator'}
+                    </Badge>
+                    {isAdmin && member.role === 'tenant' && (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="px-3 text-xs"
+                          onClick={() => handleTransferAdmin(member)}
+                        >
+                          Przekaż admina
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          className="px-3 text-xs"
+                          onClick={() => handleRemoveMember(member)}
+                        >
+                          Usuń z lokalu
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>

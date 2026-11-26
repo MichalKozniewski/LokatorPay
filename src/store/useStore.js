@@ -344,6 +344,61 @@ export function useStore() {
     });
   };
 
+  const removeApartmentMember = async ({ apartmentId, userId }) => {
+    const updated = await apiFetch(
+      `/api/apartments/${apartmentId}/members/${userId}`,
+      { method: 'DELETE' }
+    );
+    setScopedData((prev) => ({ ...prev, ...updated }));
+  };
+
+  const transferApartmentAdmin = async ({ apartmentId, userId }) => {
+    const updated = await apiFetch(
+      `/api/apartments/${apartmentId}/transfer-admin`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId }),
+      }
+    );
+    setScopedData((prev) => ({ ...prev, ...updated }));
+    setApartments(await apiFetch('/api/apartments'));
+  };
+
+  const leaveApartment = async ({ confirmEmptyApartment = false } = {}) => {
+    if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
+    const confirmationQuery = confirmEmptyApartment
+      ? '?confirm_empty_apartment=true'
+      : '';
+    await apiFetch(`/api/apartments/${activeApartmentId}/leave${confirmationQuery}`, {
+      method: 'DELETE',
+    });
+
+    const remainingApartments = await apiFetch('/api/apartments');
+    setApartments(remainingApartments);
+    if (remainingApartments.length > 0) {
+      await loadApartmentDetails(remainingApartments[0].id);
+      return;
+    }
+
+    setActiveApartmentId(null);
+    localStorage.removeItem(ACTIVE_APT_KEY);
+    setScopedData({
+      apartment: null,
+      role: null,
+      members: [],
+      rooms: [],
+      totalArea: 0,
+      invites: [],
+      meters: [],
+      expenses: [],
+    });
+  };
+
+  const deleteAccount = async () => {
+    await apiFetch('/api/auth/me', { method: 'DELETE' });
+    logout();
+  };
+
   const addRoom = async ({ name, area, tenantId = null }) => {
     if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
     const numericArea = Number(area);
@@ -374,6 +429,25 @@ export function useStore() {
     setScopedData((prev) => ({ ...prev, ...updated }));
   };
 
+  const updateRoom = async ({ roomId, name, area }) => {
+    if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
+    const trimmedName = name.trim();
+    const numericArea = Number(area);
+    if (!trimmedName) throw new Error('Podaj nazwę pokoju.');
+    if (!Number.isFinite(numericArea) || numericArea < 0.01 || numericArea > 9999.99) {
+      throw new Error('Metraż pokoju musi wynosić od 0,01 do 9999,99 m².');
+    }
+
+    const updated = await apiFetch(
+      `/api/apartments/${activeApartmentId}/rooms/${roomId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ name: trimmedName, area: numericArea }),
+      }
+    );
+    setScopedData((prev) => ({ ...prev, ...updated }));
+  };
+
   const removeRoom = async (roomId) => {
     if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
     const updated = await apiFetch(
@@ -398,8 +472,13 @@ export function useStore() {
     createApartment,
     joinApartmentByToken,
     createInvite,
+    removeApartmentMember,
+    transferApartmentAdmin,
+    leaveApartment,
+    deleteAccount,
     addRoom,
     assignTenantToRoom,
+    updateRoom,
     removeRoom,
   };
 }

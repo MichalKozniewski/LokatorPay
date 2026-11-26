@@ -1,6 +1,7 @@
 import os
 import re
 import secrets
+import math
 from decimal import Decimal
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
@@ -106,8 +107,17 @@ class CreateRoomRequest(BaseModel):
     tenant_user_id: str | None = None
 
 
+class UpdateRoomRequest(BaseModel):
+    name: str
+    area: float
+
+
 class AssignTenantRequest(BaseModel):
     tenant_user_id: str | None = None
+
+
+class TransferAdminRequest(BaseModel):
+    user_id: str
 
 
 # --- POMOCNICY AUTORYZACJI LOKALU (NFR-02) ---
@@ -274,6 +284,97 @@ def get_me(current_user: User = Depends(get_current_user)):
     }
 
 
+@app.delete("/api/auth/me")
+def delete_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    memberships = (
+        db.query(ApartmentMember, Apartment)
+        .join(Apartment, ApartmentMember.apartment_id == Apartment.id)
+        .filter(ApartmentMember.user_id == current_user.id)
+        .all()
+    )
+    blocked_apartments = []
+    for membership, apartment in memberships:
+        if membership.role != "admin":
+            continue
+        another_admin = (
+            db.query(ApartmentMember)
+            .filter(
+                ApartmentMember.apartment_id == apartment.id,
+                ApartmentMember.role == "admin",
+                ApartmentMember.user_id != current_user.id,
+            )
+            .first()
+        )
+        if not another_admin:
+            blocked_apartments.append(apartment.name)
+
+    owned_apartments = (
+        db.query(Apartment).filter(Apartment.created_by == current_user.id).all()
+    )
+    replacement_admins = {}
+    for apartment in owned_apartments:
+        replacement = (
+            db.query(ApartmentMember)
+            .filter(
+                ApartmentMember.apartment_id == apartment.id,
+                ApartmentMember.role == "admin",
+                ApartmentMember.user_id != current_user.id,
+            )
+            .first()
+        )
+        if replacement:
+            replacement_admins[apartment.id] = replacement.user_id
+        else:
+            blocked_apartments.append(apartment.name)
+
+    if blocked_apartments:
+        apartment_names = ", ".join(sorted(set(blocked_apartments)))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Przed usunięciem konta przekaż rolę administratora w lokalach: "
+                f"{apartment_names}."
+            ),
+        )
+
+    for apartment in owned_apartments:
+        apartment.created_by = replacement_admins[apartment.id]
+
+    created_invites = (
+        db.query(Invite).filter(Invite.created_by == current_user.id).all()
+    )
+    for invite in created_invites:
+        replacement = (
+            db.query(ApartmentMember)
+            .filter(
+                ApartmentMember.apartment_id == invite.apartment_id,
+                ApartmentMember.role == "admin",
+                ApartmentMember.user_id != current_user.id,
+            )
+            .first()
+        )
+        if replacement:
+            invite.created_by = replacement.user_id
+        else:
+            db.delete(invite)
+
+    db.query(Invite).filter(Invite.used_by == current_user.id).update(
+        {Invite.used_by: None}, synchronize_session=False
+    )
+    db.query(Room).filter(Room.tenant_user_id == current_user.id).update(
+        {Room.tenant_user_id: None}, synchronize_session=False
+    )
+    db.query(ApartmentMember).filter(
+        ApartmentMember.user_id == current_user.id
+    ).delete(synchronize_session=False)
+    db.delete(current_user)
+    db.commit()
+    return {"detail": "Konto zostało usunięte."}
+
+
 # --- US2: LOKALE, ROLE I JEDNORAZOWE ZAPROSZENIA (FR-02, NFR-02) ---
 
 @app.get("/api/apartments")
@@ -340,6 +441,143 @@ def get_apartment_details(
     if not apt:
         raise HTTPException(status_code=404, detail="Nie znaleziono lokalu.")
     return serialize_apartment_state(db, apt, membership.role)
+
+
+@app.post("/api/apartments/{apartment_id}/transfer-admin")
+def transfer_apartment_admin(
+    apartment_id: str,
+    data: TransferAdminRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_admin = require_admin(db, apartment_id, current_user.id)
+    admin_count = (
+        db.query(ApartmentMember)
+        .filter(
+            ApartmentMember.apartment_id == apartment_id,
+            ApartmentMember.role == "admin",
+        )
+        .count()
+    )
+    if admin_count != 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Lokal musi mieć dokładnie jednego administratora.",
+        )
+
+    new_admin = (
+        db.query(ApartmentMember)
+        .filter(
+            ApartmentMember.apartment_id == apartment_id,
+            ApartmentMember.user_id == data.user_id,
+            ApartmentMember.role == "tenant",
+        )
+        .first()
+    )
+    if not new_admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nie znaleziono lokatora w tym lokalu.",
+        )
+
+    current_admin.role = "tenant"
+    new_admin.role = "admin"
+    db.commit()
+
+    apartment = db.query(Apartment).filter(Apartment.id == apartment_id).first()
+    return serialize_apartment_state(db, apartment, "tenant")
+
+
+@app.delete("/api/apartments/{apartment_id}/members/{user_id}")
+def remove_apartment_member(
+    apartment_id: str,
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_admin(db, apartment_id, current_user.id)
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nie możesz usunąć siebie jako administratora. Przekaż najpierw tę rolę.",
+        )
+
+    membership = (
+        db.query(ApartmentMember)
+        .filter(
+            ApartmentMember.apartment_id == apartment_id,
+            ApartmentMember.user_id == user_id,
+        )
+        .first()
+    )
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ten użytkownik nie należy do lokalu.",
+        )
+    if membership.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Roli administratora nie można usunąć. Przekaż ją innemu lokatorowi.",
+        )
+
+    db.query(Room).filter(
+        Room.apartment_id == apartment_id,
+        Room.tenant_user_id == user_id,
+    ).update({Room.tenant_user_id: None}, synchronize_session=False)
+    db.delete(membership)
+    db.commit()
+
+    apartment = db.query(Apartment).filter(Apartment.id == apartment_id).first()
+    return serialize_apartment_state(db, apartment, "admin")
+
+
+@app.delete("/api/apartments/{apartment_id}/leave")
+def leave_apartment(
+    apartment_id: str,
+    confirm_empty_apartment: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership = require_member(db, apartment_id, current_user.id)
+    member_count = (
+        db.query(ApartmentMember)
+        .filter(ApartmentMember.apartment_id == apartment_id)
+        .count()
+    )
+
+    if member_count == 1:
+        if not confirm_empty_apartment:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Jesteś jedynym członkiem lokalu. Potwierdź opuszczenie i usunięcie lokalu wraz z danymi.",
+            )
+        db.query(Invite).filter(Invite.apartment_id == apartment_id).delete(
+            synchronize_session=False
+        )
+        db.query(Room).filter(Room.apartment_id == apartment_id).delete(
+            synchronize_session=False
+        )
+        db.delete(membership)
+        db.query(Apartment).filter(Apartment.id == apartment_id).delete(
+            synchronize_session=False
+        )
+        db.commit()
+        return {"detail": "Opuszczono lokal i usunięto jego dane."}
+
+    if membership.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Przed opuszczeniem lokalu przekaż rolę administratora innemu lokatorowi.",
+        )
+
+    db.query(Room).filter(
+        Room.apartment_id == apartment_id,
+        Room.tenant_user_id == current_user.id,
+    ).update({Room.tenant_user_id: None}, synchronize_session=False)
+    db.delete(membership)
+    db.commit()
+    return {"detail": "Opuszczono lokal."}
 
 
 @app.post("/api/apartments/{apartment_id}/invites", status_code=status.HTTP_201_CREATED)
@@ -421,6 +659,15 @@ def join_apartment(
 
 # --- US3: POKOJE I METRAŻ (FR-03, NFR-03) ---
 
+def normalize_room_area(area: float) -> Decimal:
+    if not math.isfinite(area) or area < 0.01 or area > 9999.99:
+        raise HTTPException(
+            status_code=400,
+            detail="Metraż pokoju musi wynosić od 0,01 do 9999,99 m².",
+        )
+    return Decimal(str(area)).quantize(Decimal("0.01"))
+
+
 @app.post("/api/apartments/{apartment_id}/rooms", status_code=status.HTTP_201_CREATED)
 def add_room(
     apartment_id: str,
@@ -433,8 +680,7 @@ def add_room(
     trimmed_name = data.name.strip()
     if not trimmed_name:
         raise HTTPException(status_code=400, detail="Podaj nazwę pokoju.")
-    if data.area <= 0:
-        raise HTTPException(status_code=400, detail="Metraż pokoju musi być większy od 0 m².")
+    area_m2 = normalize_room_area(data.area)
 
     if data.tenant_user_id:
         require_member(db, apartment_id, data.tenant_user_id)
@@ -442,7 +688,7 @@ def add_room(
     room = Room(
         apartment_id=apartment_id,
         name=trimmed_name,
-        area_m2=Decimal(f"{data.area:.2f}"),
+        area_m2=area_m2,
         tenant_user_id=data.tenant_user_id or None,
     )
     db.add(room)
@@ -454,6 +700,36 @@ def add_room(
             status_code=status.HTTP_409_CONFLICT,
             detail="Ten lokator jest już przypisany do innego pokoju w tym lokalu.",
         )
+
+    apt = db.query(Apartment).filter(Apartment.id == apartment_id).first()
+    return serialize_apartment_state(db, apt, "admin")
+
+
+@app.patch("/api/apartments/{apartment_id}/rooms/{room_id}")
+def update_room(
+    apartment_id: str,
+    room_id: str,
+    data: UpdateRoomRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_admin(db, apartment_id, current_user.id)
+
+    trimmed_name = data.name.strip()
+    if not trimmed_name:
+        raise HTTPException(status_code=400, detail="Podaj nazwę pokoju.")
+
+    room = (
+        db.query(Room)
+        .filter(Room.id == room_id, Room.apartment_id == apartment_id)
+        .first()
+    )
+    if not room:
+        raise HTTPException(status_code=404, detail="Nie znaleziono pokoju.")
+
+    room.name = trimmed_name
+    room.area_m2 = normalize_room_area(data.area)
+    db.commit()
 
     apt = db.query(Apartment).filter(Apartment.id == apartment_id).first()
     return serialize_apartment_state(db, apt, "admin")

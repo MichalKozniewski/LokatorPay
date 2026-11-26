@@ -8,6 +8,8 @@ import { Button, Badge } from './components/ui';
 export default function App() {
   const store = useStore();
   const [creatingNewApt, setCreatingNewApt] = useState(false);
+  const [accountActionError, setAccountActionError] = useState('');
+  const [accountActionLoading, setAccountActionLoading] = useState(false);
 
   if (store.loading) {
     return (
@@ -24,6 +26,42 @@ export default function App() {
 
   const { apartment, role } = store.scopedData;
   const hasApartment = Boolean(apartment);
+
+  const handleLeaveApartment = async () => {
+    const isLastMember = store.scopedData.members.length === 1;
+    const confirmationMessage = isLastMember
+      ? `Jesteś jedynym członkiem lokalu "${apartment.name}". Opuszczenie spowoduje trwałe usunięcie lokalu oraz jego pokoi i zaproszeń. Kontynuować?`
+      : `Opuścić lokal "${apartment.name}"?`;
+    if (!window.confirm(confirmationMessage)) return;
+    setAccountActionError('');
+    setAccountActionLoading(true);
+    try {
+      await store.leaveApartment({ confirmEmptyApartment: isLastMember });
+    } catch (err) {
+      setAccountActionError(err.message);
+    } finally {
+      setAccountActionLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (
+      !window.confirm(
+        'Usunąć konto? Zostaniesz usunięty ze wszystkich lokali, a przypisania pokoi zostaną wyczyszczone. Tej operacji nie można cofnąć.'
+      )
+    ) {
+      return;
+    }
+    setAccountActionError('');
+    setAccountActionLoading(true);
+    try {
+      await store.deleteAccount();
+    } catch (err) {
+      setAccountActionError(err.message);
+    } finally {
+      setAccountActionLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -81,6 +119,27 @@ export default function App() {
               </Button>
             )}
 
+            {hasApartment &&
+              (role === 'tenant' || store.scopedData.members.length === 1) && (
+                <Button
+                  variant="secondary"
+                  onClick={handleLeaveApartment}
+                  disabled={accountActionLoading}
+                  className="text-xs sm:text-sm px-3"
+                >
+                  Opuść lokal
+                </Button>
+              )}
+
+            <Button
+              variant="danger"
+              onClick={handleDeleteAccount}
+              disabled={accountActionLoading}
+              className="text-xs sm:text-sm px-3"
+            >
+              {accountActionLoading ? 'Przetwarzanie...' : 'Usuń konto'}
+            </Button>
+
             <Button
               variant="ghost"
               onClick={store.logout}
@@ -107,6 +166,24 @@ export default function App() {
             <button
               type="button"
               onClick={store.clearInviteBanner}
+              className="text-xs font-bold underline shrink-0"
+            >
+              Zamknij
+            </button>
+          </div>
+        </div>
+      )}
+
+      {accountActionError && (
+        <div className="max-w-5xl w-full mx-auto px-3 sm:px-6 pt-4">
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-900"
+          >
+            <span>{accountActionError}</span>
+            <button
+              type="button"
+              onClick={() => setAccountActionError('')}
               className="text-xs font-bold underline shrink-0"
             >
               Zamknij
