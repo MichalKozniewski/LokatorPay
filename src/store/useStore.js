@@ -1,18 +1,19 @@
 import { useState, useEffect } from 'react';
 
-const STORAGE_KEY = 'rent_manager_slate_v1';
+const STORAGE_KEY = 'lokatorpay_slate_v1';
 
 const initialState = {
   rooms: [],
   tenants: [],
-  bills: [],
+  meters: [],
+  expenses: [],
 };
 
 export function useStore() {
   const [db, setDb] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : initialState;
+      return saved ? { ...initialState, ...JSON.parse(saved) } : initialState;
     } catch {
       return initialState;
     }
@@ -27,10 +28,6 @@ export function useStore() {
   }, [db]);
 
   const resetDb = () => setDb(initialState);
-
-  // TODO (os2): Tutaj dopisuj kolejne akcje i operacje na stanie, np.:
-  // const addRoom = (name, area) => { ... };
-  // const assignTenant = (roomId, tenantId) => { ... };
 
   return {
     db,
