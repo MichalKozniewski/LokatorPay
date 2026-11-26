@@ -7,7 +7,6 @@ import { TenantsView } from './views/TenantsView';
 export default function App() {
   const store = useStore();
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [showDebug, setShowDebug] = useState(false);
 
   const tabs = [
     { id: 'dashboard', label: 'Pulpit' },
@@ -51,31 +50,6 @@ export default function App() {
         {activeTab === 'rooms' && <RoomsView store={store} />}
         {activeTab === 'tenants' && <TenantsView store={store} />}
       </main>
-
-      {/* Podgląd stanu JSON (Debug) */}
-      <footer className="max-w-4xl w-full mx-auto px-6 pb-8">
-        <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
-          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <button
-              onClick={() => setShowDebug(!showDebug)}
-              className="text-xs font-mono text-slate-600 hover:text-slate-900"
-            >
-              {showDebug ? '▼ Ukryj stan JSON (db)' : '▶ Pokaż stan JSON (db)'}
-            </button>
-            <button
-              onClick={store.resetDb}
-              className="text-xs text-rose-600 hover:text-rose-700 font-medium"
-            >
-              Resetuj stan
-            </button>
-          </div>
-          {showDebug && (
-            <pre className="p-4 text-xs font-mono text-slate-700 overflow-x-auto bg-slate-900 text-slate-100">
-              {JSON.stringify(store.db, null, 2)}
-            </pre>
-          )}
-        </div>
-      </footer>
     </div>
   );
 }
