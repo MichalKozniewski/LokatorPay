@@ -83,8 +83,12 @@ export function useStore() {
     rooms: [],
     totalArea: 0,
     invites: [],
+    rent: null,
     meters: [],
     expenses: [],
+    balances: [],
+    suggestedTransfers: [],
+    completedTransfers: [],
   });
   const [loading, setLoading] = useState(Boolean(token));
   const [inviteBanner, setInviteBanner] = useState(null);
@@ -113,8 +117,12 @@ export function useStore() {
       rooms: [],
       totalArea: 0,
       invites: [],
+      rent: null,
       meters: [],
       expenses: [],
+      balances: [],
+      suggestedTransfers: [],
+      completedTransfers: [],
     });
   }, []);
 
@@ -188,7 +196,6 @@ export function useStore() {
         ...prev,
         ...details,
         meters: prev.meters || [],
-        expenses: prev.expenses || [],
       }));
       setActiveApartmentId(aptId);
       localStorage.setItem(ACTIVE_APT_KEY, aptId);
@@ -389,8 +396,12 @@ export function useStore() {
       rooms: [],
       totalArea: 0,
       invites: [],
+      rent: null,
       meters: [],
       expenses: [],
+      balances: [],
+      suggestedTransfers: [],
+      completedTransfers: [],
     });
   };
 
@@ -399,7 +410,12 @@ export function useStore() {
     logout();
   };
 
-  const addRoom = async ({ name, area, tenantId = null }) => {
+  const addRoom = async ({
+    name,
+    area,
+    tenantId = null,
+    includeInCurrentRent = true,
+  }) => {
     if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
     const numericArea = Number(area);
     if (!Number.isFinite(numericArea) || numericArea <= 0) {
@@ -412,18 +428,26 @@ export function useStore() {
         name,
         area: numericArea,
         tenant_user_id: tenantId || null,
+        include_in_current_rent: includeInCurrentRent,
       }),
     });
     setScopedData((prev) => ({ ...prev, ...updated }));
   };
 
-  const assignTenantToRoom = async ({ roomId, tenantId }) => {
+  const assignTenantToRoom = async ({
+    roomId,
+    tenantId,
+    includeInCurrentRent = true,
+  }) => {
     if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
     const updated = await apiFetch(
       `/api/apartments/${activeApartmentId}/rooms/${roomId}/assign`,
       {
         method: 'PATCH',
-        body: JSON.stringify({ tenant_user_id: tenantId || null }),
+        body: JSON.stringify({
+          tenant_user_id: tenantId || null,
+          include_in_current_rent: includeInCurrentRent,
+        }),
       }
     );
     setScopedData((prev) => ({ ...prev, ...updated }));
@@ -457,6 +481,58 @@ export function useStore() {
     setScopedData((prev) => ({ ...prev, ...updated }));
   };
 
+  const saveRentSettings = async ({ rentAmount, billingStartDay }) => {
+    if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
+    const updated = await apiFetch(
+      `/api/apartments/${activeApartmentId}/rent/settings`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          rent_amount: Number(rentAmount),
+          billing_start_day: Number(billingStartDay),
+        }),
+      }
+    );
+    setScopedData((prev) => ({ ...prev, ...updated }));
+  };
+
+  const addExpense = async ({
+    description,
+    amount,
+    payerUserId,
+    participantUserIds,
+  }) => {
+    if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
+    const updated = await apiFetch(
+      `/api/apartments/${activeApartmentId}/expenses`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          description,
+          amount: Number(amount),
+          payer_user_id: payerUserId,
+          participant_user_ids: participantUserIds,
+        }),
+      }
+    );
+    setScopedData((prev) => ({ ...prev, ...updated }));
+  };
+
+  const completeSuggestedTransfer = async ({ recipientUserId, amount }) => {
+    if (!activeApartmentId) throw new Error('Brak wybranego lokalu.');
+    const updated = await apiFetch(
+      `/api/apartments/${activeApartmentId}/settlements/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          recipient_user_id: recipientUserId,
+          amount: Number(amount),
+        }),
+      }
+    );
+    setScopedData((prev) => ({ ...prev, ...updated }));
+  };
+
   return {
     session: token && user ? { token, user } : null,
     loading,
@@ -480,5 +556,8 @@ export function useStore() {
     assignTenantToRoom,
     updateRoom,
     removeRoom,
+    saveRentSettings,
+    addExpense,
+    completeSuggestedTransfer,
   };
 }

@@ -1,8 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, PageHeader, Button, Input, Badge } from '../components/ui';
 
 export function DashboardRoomsView({ store }) {
-  const { apartment, role, members, rooms, totalArea, invites } = store.scopedData;
+  const {
+    apartment,
+    role,
+    members,
+    rooms,
+    totalArea,
+    invites,
+    rent,
+    expenses,
+    balances,
+    suggestedTransfers,
+    completedTransfers,
+  } = store.scopedData;
   const isAdmin = role === 'admin';
 
   // Stan formularza zaproszeń (US2)
@@ -27,6 +39,40 @@ export function DashboardRoomsView({ store }) {
   const [editRoomLoading, setEditRoomLoading] = useState(false);
   const [memberActionError, setMemberActionError] = useState('');
   const [memberActionMessage, setMemberActionMessage] = useState('');
+  const [rentAmount, setRentAmount] = useState('');
+  const [billingStartDay, setBillingStartDay] = useState('1');
+  const [rentSaving, setRentSaving] = useState(false);
+  const [rentError, setRentError] = useState('');
+  const [expenseDescription, setExpenseDescription] = useState('');
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expensePayerId, setExpensePayerId] = useState('');
+  const [expenseParticipantIds, setExpenseParticipantIds] = useState([]);
+  const [expenseSaving, setExpenseSaving] = useState(false);
+  const [expenseError, setExpenseError] = useState('');
+  const [transferLoadingId, setTransferLoadingId] = useState('');
+  const [transferError, setTransferError] = useState('');
+  const [rentAssignmentPrompt, setRentAssignmentPrompt] = useState(null);
+  const [rentAssignmentSaving, setRentAssignmentSaving] = useState(false);
+  const currentUserId = store.session?.user?.id;
+  const memberIdsKey = members
+    .map((member) => member.userId)
+    .sort()
+    .join('|');
+
+  useEffect(() => {
+    setRentAmount(rent?.settings ? String(rent.settings.rentAmount) : '');
+    setBillingStartDay(
+      rent?.settings ? String(rent.settings.billingStartDay) : '1'
+    );
+  }, [apartment?.id, rent?.settings?.rentAmount, rent?.settings?.billingStartDay]);
+
+  useEffect(() => {
+    setExpenseDescription('');
+    setExpenseAmount('');
+    setExpensePayerId(currentUserId || members[0]?.userId || '');
+    setExpenseParticipantIds(memberIdsKey ? memberIdsKey.split('|') : []);
+    setExpenseError('');
+  }, [apartment?.id, currentUserId, memberIdsKey]);
 
   if (!apartment) return null;
 
@@ -65,8 +111,7 @@ export function DashboardRoomsView({ store }) {
     }
   };
 
-  const handleAddRoom = async (e) => {
-    e.preventDefault();
+  const saveNewRoom = async (includeInCurrentRent) => {
     setRoomError('');
     setRoomLoading(true);
     try {
@@ -74,6 +119,7 @@ export function DashboardRoomsView({ store }) {
         name: roomName,
         area: roomArea,
         tenantId: roomTenantId || null,
+        includeInCurrentRent,
       });
       setRoomName('');
       setRoomArea('');
@@ -85,15 +131,75 @@ export function DashboardRoomsView({ store }) {
     }
   };
 
-  const handleAssignTenant = async (roomId, tenantId) => {
+  const handleAddRoom = async (e) => {
+    e.preventDefault();
+    if (roomTenantId && rent?.settings) {
+      setRentAssignmentPrompt({
+        kind: 'new-room',
+        tenantId: roomTenantId,
+      });
+      return;
+    }
+    await saveNewRoom(true);
+  };
+
+  const saveTenantAssignment = async (roomId, tenantId, includeInCurrentRent) => {
     setAssignError('');
     try {
       await store.assignTenantToRoom({
         roomId,
         tenantId: tenantId || null,
+        includeInCurrentRent,
       });
     } catch (err) {
       setAssignError(err.message);
+    }
+  };
+
+  const handleAssignTenant = async (roomId, tenantId) => {
+    setAssignError('');
+    if (tenantId && rent?.settings) {
+      setRentAssignmentPrompt({
+        kind: 'existing-room',
+        roomId,
+        tenantId,
+      });
+      return;
+    }
+    await saveTenantAssignment(roomId, tenantId, true);
+  };
+
+  const chooseRentAssignment = async (includeInCurrentRent) => {
+    if (!rentAssignmentPrompt) return;
+    setRentAssignmentSaving(true);
+    try {
+      if (rentAssignmentPrompt.kind === 'new-room') {
+        await store.addRoom({
+          name: roomName,
+          area: roomArea,
+          tenantId: rentAssignmentPrompt.tenantId,
+          includeInCurrentRent,
+        });
+        setRoomName('');
+        setRoomArea('');
+        setRoomTenantId('');
+      } else {
+        await store.assignTenantToRoom({
+          roomId: rentAssignmentPrompt.roomId,
+          tenantId: rentAssignmentPrompt.tenantId,
+          includeInCurrentRent,
+        });
+      }
+      setRentAssignmentPrompt(null);
+    } catch (err) {
+      if (rentAssignmentPrompt.kind === 'new-room') {
+        setRoomError(err.message);
+      } else {
+        setAssignError(err.message);
+      }
+      setRentAssignmentPrompt(null);
+    } finally {
+      setRentAssignmentSaving(false);
     }
   };
 
@@ -135,6 +241,71 @@ export function DashboardRoomsView({ store }) {
       if (editingRoomId === roomId) setEditingRoomId(null);
     } catch (err) {
       setAssignError(err.message);
+    }
+  };
+
+  const handleSaveRentSettings = async (e) => {
+    e.preventDefault();
+    setRentError('');
+    setRentSaving(true);
+    try {
+      await store.saveRentSettings({
+        rentAmount,
+        billingStartDay,
+      });
+    } catch (err) {
+      setRentError(err.message);
+    } finally {
+      setRentSaving(false);
+    }
+  };
+
+  const handleCreateExpense = async (e) => {
+    e.preventDefault();
+    setExpenseError('');
+    if (expenseParticipantIds.length === 0) {
+      setExpenseError('Wybierz co najmniej jednego uczestnika.');
+      return;
+    }
+
+    setExpenseSaving(true);
+    try {
+      await store.addExpense({
+        description: expenseDescription,
+        amount: expenseAmount,
+        payerUserId: expensePayerId,
+        participantUserIds: expenseParticipantIds,
+      });
+      setExpenseDescription('');
+      setExpenseAmount('');
+    } catch (err) {
+      setExpenseError(err.message);
+    } finally {
+      setExpenseSaving(false);
+    }
+  };
+
+  const toggleExpenseParticipant = (userId) => {
+    setExpenseError('');
+    setExpenseParticipantIds((selected) =>
+      selected.includes(userId)
+        ? selected.filter((selectedId) => selectedId !== userId)
+        : [...selected, userId]
+    );
+  };
+
+  const handleCompleteTransfer = async (transfer) => {
+    setTransferError('');
+    setTransferLoadingId(`${transfer.toUserId}-${transfer.amount}`);
+    try {
+      await store.completeSuggestedTransfer({
+        recipientUserId: transfer.toUserId,
+        amount: transfer.amount,
+      });
+    } catch (err) {
+      setTransferError(err.message);
+    } finally {
+      setTransferLoadingId('');
     }
   };
 
@@ -211,6 +382,87 @@ export function DashboardRoomsView({ store }) {
         </Card>
 
         <Card>
+          <div className="space-y-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Proponowane przelewy</h2>
+              <p className="mt-1 text-xs text-slate-600">
+                Plan wyrównuje salda możliwie małą liczbą przelewów. Oznacz przelew dopiero po
+                jego wykonaniu.
+              </p>
+            </div>
+            {transferError && (
+              <p role="alert" className="text-sm font-semibold text-rose-700">
+                {transferError}
+              </p>
+            )}
+            {suggestedTransfers?.length ? (
+              <ul className="divide-y divide-slate-200">
+                {suggestedTransfers.map((transfer) => {
+                  const transferId = `${transfer.toUserId}-${transfer.amount}`;
+                  const isSender = transfer.fromUserId === currentUserId;
+                  return (
+                    <li
+                      key={transferId}
+                      className="flex flex-wrap items-center justify-between gap-3 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {transfer.fromName} → {transfer.toName}
+                        </p>
+                        <p className="text-sm text-slate-700">
+                          {Number(transfer.amount).toFixed(2)} zł
+                        </p>
+                      </div>
+                      {isSender ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => handleCompleteTransfer(transfer)}
+                          disabled={Boolean(transferLoadingId)}
+                          className="px-3 text-xs"
+                        >
+                          {transferLoadingId === transferId
+                            ? 'Zapisywanie...'
+                            : 'Oznacz jako zrealizowany'}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-slate-600">
+                          Oczekiwanie na przelew
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="rounded-lg bg-emerald-50 p-3 text-sm font-medium text-emerald-900">
+                Salda są wyrównane. Nie ma przelewów do wykonania.
+              </p>
+            )}
+            {completedTransfers?.length > 0 && (
+              <div className="border-t border-slate-200 pt-3">
+                <h3 className="text-sm font-semibold text-slate-800">
+                  Ostatnio zrealizowane
+                </h3>
+                <ul className="mt-1 divide-y divide-slate-100">
+                  {completedTransfers.slice(0, 5).map((transfer) => (
+                    <li
+                      key={transfer.id}
+                      className="flex justify-between gap-3 py-1.5 text-xs text-slate-600"
+                    >
+                      <span>{transfer.fromName} → {transfer.toName}</span>
+                      <span className="shrink-0">
+                        {Number(transfer.amount).toFixed(2)} zł
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card>
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">
             Zdefiniowane pokoje
           </p>
@@ -230,6 +482,344 @@ export function DashboardRoomsView({ store }) {
           </p>
         </Card>
       </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Dodaj wspólny wydatek</h2>
+              <p className="mt-1 text-xs text-slate-600">
+                Koszt zostanie podzielony po równo między zaznaczone osoby. Domyślnie
+                zaznaczeni są wszyscy domownicy, a płatnikiem jesteś Ty.
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateExpense} className="space-y-3">
+              <Input
+                id="expense-description"
+                label="Opis"
+                placeholder="np. Netflix, środki czystości"
+                value={expenseDescription}
+                onChange={(e) => setExpenseDescription(e.target.value)}
+                maxLength="200"
+                required
+              />
+              <Input
+                id="expense-amount"
+                label="Kwota (zł)"
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="np. 59.99"
+                value={expenseAmount}
+                onChange={(e) => setExpenseAmount(e.target.value)}
+                required
+              />
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="expense-payer"
+                  className="block text-sm font-semibold text-slate-900"
+                >
+                  Płatnik
+                </label>
+                <select
+                  id="expense-payer"
+                  value={expensePayerId}
+                  onChange={(e) => setExpensePayerId(e.target.value)}
+                  required
+                  className="w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="" disabled>Wybierz płatnika</option>
+                  {members.map((member) => (
+                    <option key={member.userId} value={member.userId}>
+                      {member.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-semibold text-slate-900">
+                  Uczestnicy (co najmniej jedna osoba)
+                </legend>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {members.map((member) => (
+                    <label
+                      key={member.userId}
+                      className="flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={expenseParticipantIds.includes(member.userId)}
+                        onChange={() => toggleExpenseParticipant(member.userId)}
+                        className="h-4 w-4 accent-indigo-700"
+                      />
+                      <span className="truncate">{member.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {expenseError && (
+                <p role="alert" className="text-sm font-semibold text-rose-700">
+                  {expenseError}
+                </p>
+              )}
+              <Button type="submit" className="w-full" disabled={expenseSaving}>
+                {expenseSaving ? 'Zapisywanie...' : 'Zapisz wydatek'}
+              </Button>
+            </form>
+          </div>
+        </Card>
+
+        <div className="space-y-6">
+          <Card>
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Bilanse lokatorów</h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  Bilans uwzględnia kwoty zapłacone i udziały w wydatkach.
+                </p>
+              </div>
+              {balances?.length ? (
+                <ul className="divide-y divide-slate-200">
+                  {balances.map((balance) => {
+                    const amount = Number(balance.balance);
+                    return (
+                      <li
+                        key={balance.userId}
+                        className="flex items-center justify-between gap-3 py-2"
+                      >
+                        <span className="min-w-0 truncate text-sm font-medium text-slate-800">
+                          {balance.name}
+                        </span>
+                        <span
+                          className={`shrink-0 text-sm font-bold ${
+                            amount > 0
+                              ? 'text-emerald-700'
+                              : amount < 0
+                                ? 'text-rose-700'
+                                : 'text-slate-600'
+                          }`}
+                        >
+                          {amount > 0 ? '+' : ''}{amount.toFixed(2)} zł
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-600">Brak bilansów do wyświetlenia.</p>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="space-y-3">
+              <h2 className="text-lg font-bold text-slate-900">Ostatnie wydatki</h2>
+              {expenses?.length ? (
+                <ul className="divide-y divide-slate-200">
+                  {expenses.map((expense) => (
+                    <li key={expense.id} className="space-y-1 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-900">
+                          {expense.description}
+                        </span>
+                        <span className="font-bold text-slate-900">
+                          {Number(expense.amount).toFixed(2)} zł
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        Zapłacił: {expense.payerName}
+                      </p>
+                      <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-600">
+                        {expense.participants.map((participant) => (
+                          <li key={participant.userId}>
+                            {participant.name}: {Number(participant.amountOwed).toFixed(2)} zł
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-600">Nie dodano jeszcze wydatków.</p>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      <Card>
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Czynsz i rozliczenie</h2>
+            <p className="mt-1 text-xs text-slate-600">
+              Koszt jest dzielony proporcjonalnie do metrażu przypisanych pokoi. Zmiany
+              czynszu, metrażu i przypisań obowiązują od następnego okresu.
+            </p>
+          </div>
+
+          {isAdmin && (
+            <form
+              onSubmit={handleSaveRentSettings}
+              className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"
+            >
+              <Input
+                id="rent-amount"
+                label="Czynsz za okres (zł)"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={rentAmount}
+                onChange={(e) => setRentAmount(e.target.value)}
+                required
+              />
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="rent-cycle"
+                  className="block text-sm font-semibold text-slate-900"
+                >
+                  Okres rozliczeniowy
+                </label>
+                <select
+                  id="rent-cycle"
+                  value={billingStartDay === '1' ? 'calendar' : 'custom'}
+                  onChange={(e) =>
+                    setBillingStartDay(e.target.value === 'calendar' ? '1' : '10')
+                  }
+                  disabled={Boolean(rent?.settings)}
+                  className="w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100"
+                >
+                  <option value="calendar">Miesiąc kalendarzowy</option>
+                  <option value="custom">Cykliczny od wybranego dnia</option>
+                </select>
+                {billingStartDay !== '1' && (
+                  <Input
+                    id="rent-cycle-start-day"
+                    label="Dzień rozpoczęcia okresu (1–28)"
+                    type="number"
+                    min="1"
+                    max="28"
+                    value={billingStartDay}
+                    onChange={(e) => setBillingStartDay(e.target.value)}
+                    disabled={Boolean(rent?.settings)}
+                    required
+                  />
+                )}
+              </div>
+              <Button type="submit" disabled={rentSaving}>
+                {rentSaving ? 'Zapisywanie...' : rent?.settings ? 'Zmień czynsz' : 'Ustaw czynsz'}
+              </Button>
+              {rentError && (
+                <p role="alert" className="text-sm font-semibold text-rose-700 sm:col-span-3">
+                  {rentError}
+                </p>
+              )}
+            </form>
+          )}
+
+          {rent?.currentPeriod ? (
+            <div className="space-y-3 border-t border-slate-200 pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold text-slate-900">
+                    Bieżący okres: {rent.currentPeriod.startsOn} – {rent.currentPeriod.endsOn}
+                  </h3>
+                  <p className="text-sm text-slate-700">
+                    Czynsz: {Number(rent.currentPeriod.rentAmount).toFixed(2)} zł
+                  </p>
+                </div>
+                <p className="text-xs text-slate-600">
+                  Nieprzypisane pokoje nieuwzględnione: {rent.unassignedRoomCount}
+                </p>
+              </div>
+              {rent.currentPeriod.excludedTenants?.length > 0 && (
+                <ul className="space-y-1 text-xs text-amber-900">
+                  {rent.currentPeriod.excludedTenants.map((tenant) => {
+                    const assignedRoom = rooms.find((room) => room.tenantId === tenant.tenantId);
+                    return (
+                      <li
+                        key={tenant.tenantId}
+                        className="flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span>Wyłączony z bieżącego czynszu: {tenant.tenantName}</span>
+                        {isAdmin && assignedRoom && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="min-h-9 px-2.5 py-1 text-xs"
+                            onClick={() =>
+                              setRentAssignmentPrompt({
+                                kind: 'current-period',
+                                tenantId: tenant.tenantId,
+                                roomId: assignedRoom.id,
+                              })
+                            }
+                          >
+                            Edytuj udział
+                          </Button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {rent.currentPeriod.allocations.length > 0 ? (
+                <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200">
+                  {rent.currentPeriod.allocations.map((allocation) => (
+                    <li
+                      key={allocation.tenantId}
+                      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2.5 text-sm"
+                    >
+                      <span className="min-w-0">
+                        <span className="font-semibold text-slate-900">
+                          {allocation.tenantName}
+                        </span>
+                        <span className="text-slate-600">
+                          {' '}· {allocation.roomName}, {Number(allocation.area).toFixed(2)} m²
+                          {' '}({Number(allocation.sharePercent).toFixed(2)}%)
+                        </span>
+                      </span>
+                      <span className="shrink-0 font-bold text-slate-900">
+                        {Number(allocation.amount).toFixed(2)} zł
+                      </span>
+                      {isAdmin && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="min-h-9 px-2.5 py-1 text-xs"
+                          onClick={() =>
+                            setRentAssignmentPrompt({
+                              kind: 'current-period',
+                              tenantId: allocation.tenantId,
+                              roomId: allocation.roomId,
+                            })
+                          }
+                        >
+                          Edytuj udział
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p role="status" className="text-sm text-slate-600">
+                  Brak lokatorów uwzględnionych w bieżącym czynszu.
+                </p>
+              )}
+            </div>
+          ) : rent?.settings ? (
+            <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+              Przypisz lokatora do co najmniej jednego pokoju, aby utworzyć rozliczenie czynszu.
+            </p>
+          ) : (
+            <p className="text-sm text-slate-600">
+              Czynsz nie został jeszcze skonfigurowany.
+            </p>
+          )}
+        </div>
+      </Card>
 
       {/* US3: Pokoje i metraż */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -625,6 +1215,60 @@ export function DashboardRoomsView({ store }) {
           </Card>
         )}
       </div>
+
+      {rentAssignmentPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rent-assignment-title"
+            aria-describedby="rent-assignment-description"
+            className="w-full max-w-lg rounded-xl border border-slate-300 bg-white p-5 shadow-xl"
+          >
+            <h2 id="rent-assignment-title" className="text-lg font-bold text-slate-900">
+              {rentAssignmentPrompt.kind === 'current-period'
+                ? 'Zmień udział w bieżącym czynszu'
+                : 'Uwzględnić lokatora w bieżącym czynszu?'}
+            </h2>
+            <p id="rent-assignment-description" className="mt-2 text-sm text-slate-700">
+              {members.find((member) => member.userId === rentAssignmentPrompt.tenantId)?.name ||
+                'Wybrany lokator'}
+              {rentAssignmentPrompt.kind === 'current-period'
+                ? ' pozostanie przypisany do pokoju. Wybierz, czy ma ponosić udział w czynszu za bieżący okres.'
+                : ' zostanie przypisany do pokoju. Możesz uwzględnić go w podziale czynszu za bieżący okres albo przypisać do pokoju bez naliczania mu udziału w tym okresie. Od następnego okresu przypisani lokatorzy będą uwzględniani automatycznie.'}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setRentAssignmentPrompt(null)}
+                disabled={rentAssignmentSaving}
+              >
+                Anuluj
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => chooseRentAssignment(false)}
+                disabled={rentAssignmentSaving}
+              >
+                {rentAssignmentSaving
+                  ? 'Zapisywanie...'
+                  : rentAssignmentPrompt.kind === 'current-period'
+                    ? 'Wyłącz z bieżącego czynszu'
+                    : 'Przypisz bez bieżącego czynszu'}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => chooseRentAssignment(true)}
+                disabled={rentAssignmentSaving}
+              >
+                {rentAssignmentSaving ? 'Zapisywanie...' : 'Uwzględnij w czynszu'}
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
